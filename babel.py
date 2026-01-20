@@ -16,7 +16,9 @@ def text_bable(
         target = random.choice(languages)
         try:
             if not translator.supports(src, target):
+                print(f"{translator.name()} does not support {src}->{target}")
                 continue
+            print(f"Translating {src}->{target} with {translator.name()}")
             current = translator.translate(current, src, target)
             src = target
             i += 1
@@ -38,9 +40,11 @@ if __name__ == "__main__":
 
     parser = ArgumentParser(prog="Babel", description="Nonsense")
     parser.add_argument("-t", "--text", help="Text to translate", required=True)
-    parser.add_argument("-n", help="number of times to iterate", default=10)
+    parser.add_argument("-n", help="number of times to iterate", default=10, type=int)
     args = parser.parse_args()
 
-    output = text_bable(args.text, TRANSLATORS, LANGUAGES, iterations=args.n)
+    output = text_bable(
+        args.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n
+    )
 
     print(output)

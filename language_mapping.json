@@ -1,0 +1,150 @@
+{
+  "en": {
+    "nllb": "eng_Latn",
+    "marian": "en"
+  },
+  "fr": {
+    "nllb": "fra_Latn",
+    "marian": "fr"
+  },
+  "de": {
+    "nllb": "deu_Latn",
+    "marian": "de"
+  },
+  "es": {
+    "nllb": "spa_Latn",
+    "marian": "es"
+  },
+  "it": {
+    "nllb": "ita_Latn",
+    "marian": "it"
+  },
+  "pt": {
+    "nllb": "por_Latn",
+    "marian": "pt"
+  },
+  "nl": {
+    "nllb": "nld_Latn",
+    "marian": "nl"
+  },
+  "ru": {
+    "nllb": "rus_Cyrl",
+    "marian": "ru"
+  },
+  "zh": {
+    "nllb": "zho_Hans",
+    "marian": "zh"
+  },
+  "ja": {
+    "nllb": "jpn_Jpan",
+    "marian": "ja"
+  },
+  "ko": {
+    "nllb": "kor_Hang",
+    "marian": "ko"
+  },
+  "ar": {
+    "nllb": "arb_Arab",
+    "marian": "ar"
+  },
+  "hi": {
+    "nllb": "hin_Deva",
+    "marian": "hi"
+  },
+  "bn": {
+    "nllb": "ben_Beng",
+    "marian": "bn"
+  },
+  "ur": {
+    "nllb": "urd_Arab",
+    "marian": "ur"
+  },
+  "sw": {
+    "nllb": "swh_Latn",
+    "marian": "sw"
+  },
+  "vi": {
+    "nllb": "vie_Latn",
+    "marian": "vi"
+  },
+  "id": {
+    "nllb": "ind_Latn",
+    "marian": "id"
+  },
+  "th": {
+    "nllb": "tha_Thai",
+    "marian": "th"
+  },
+  "tr": {
+    "nllb": "tur_Latn",
+    "marian": "tr"
+  },
+  "pl": {
+    "nllb": "pol_Latn",
+    "marian": "pl"
+  },
+  "sv": {
+    "nllb": "swe_Latn",
+    "marian": "sv"
+  },
+  "no": {
+    "nllb": "nob_Latn",
+    "marian": null
+  },
+  "da": {
+    "nllb": "dan_Latn",
+    "marian": "da"
+  },
+  "fi": {
+    "nllb": "fin_Latn",
+    "marian": "fi"
+  },
+  "hu": {
+    "nllb": "hun_Latn",
+    "marian": "hu"
+  },
+  "cs": {
+    "nllb": "ces_Latn",
+    "marian": "cs"
+  },
+  "ro": {
+    "nllb": "ron_Latn",
+    "marian": "ro"
+  },
+  "bg": {
+    "nllb": "bul_Cyrl",
+    "marian": "bg"
+  },
+  "eo": {
+    "nllb": "epo_Latn",
+    "marian": null
+  },
+  "zu": {
+    "nllb": "zul_Latn",
+    "marian": "zu"
+  },
+  "am": {
+    "nllb": "amh_Ethi",
+    "marian": null
+  },
+  "so": {
+    "nllb": "som_Latn",
+    "marian": null
+  },
+  "sn": {
+    "nllb": "sna_Latn",
+    "marian": null
+  },
+  "xh": {
+    "nllb": "xho_Latn",
+    "marian": null
+  },
+  "ti": {
+    "nllb": "tir_Ethi",
+    "marian": null
+  },
+  "rw": {
+    "nllb": "run_Latn",
+    "marian": null
+  }
+}

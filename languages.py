@@ -1,20 +1,5 @@
-MODELS = {
-    "facebook/nllb-200-distilled-600M": [
-        "fra_Latn",
-        "deu_Latn",
-        "rus_Cyrl",
-        "arb_Arab",
-        "jpn_Jpan",
-        "kor_Hang",
-        "zul_Latn",
-        "amh_Ethi",
-        "tam_Taml",
-        "tha_Thai",
-        "eng_Latn",
-    ]
-}
-
 from dataclasses import dataclass
+import json
 
 
 @dataclass(frozen=True)
@@ -27,16 +12,7 @@ class Lang:
 
 EN = Lang("en")
 
-LANGUAGES = [
-    Lang("fr"),
-    Lang("ar"),
-    Lang("de"),
-    EN,
-    Lang("it"),
-    Lang("ja"),
-    Lang("ko"),
-    Lang("pl"),
-    Lang("ru"),
-    Lang("tr"),
-    Lang("zh"),
-]
+with open("language_mapping.json", "r", encoding="utf-8") as f:
+    LANGUAGES: dict[Lang, dict[str, str]] = {
+        Lang(k): v for k, v in json.load(f).items()
+    }
