@@ -1,44 +1,23 @@
-from transformers import MarianMTModel, MarianTokenizer
-import torch
+from languages import Lang, EN
+from translators import Translator
 import random
 
-DEVICE = "cuda"
 
-_model_cache = {}
-
-
-def load_model(src: str, target: str) -> (MarianTokenizer, MarianMTModel):
-    key = f"{src}->{target}"
-    if key in _model_cache:
-        return _model_cache[key]
-
-    model_name = f"Helsinki-NLP/opus-mt-{src}-{target}"
-    tokenizer = MarianTokenizer.from_pretrained(model_name)
-    model = MarianMTModel.from_pretrained(model_name).to(DEVICE)
-    _model_cache[key] = (tokenizer, model)
-    return tokenizer, model
-
-
-def translate(text: str, src: str, target: str) -> str:
-    print(f"translating {src} to {target}")
-    tokenizer, model = load_model(src, target)
-
-    batch = tokenizer(text, return_tensors="pt", padding=True).to(DEVICE)
-    with torch.no_grad():
-        generated = model.generate(**batch)
-
-    return tokenizer.decode(generated[0], skip_special_tokens=True)
-
-
-def text_bable(text: str, lang_chain: list[str], iterations=10) -> str:
+def text_bable(
+    text: str, translators: list[Translator], languages: list[Lang], iterations=10
+) -> str:
     current = text
-    src = "en"
+    src = EN
 
     i = 0
+    translator = None
     while True:
-        target = random.choice(lang_chain)
+        translator = random.choice(translators)
+        target = random.choice(languages)
         try:
-            current = translate(current, src, target)
+            if not translator.supports(src, target):
+                continue
+            current = translator.translate(current, src, target)
             src = target
             i += 1
         except EnvironmentError:
@@ -46,21 +25,22 @@ def text_bable(text: str, lang_chain: list[str], iterations=10) -> str:
         if i >= iterations:
             break
 
-    if src != "en":
-        current = translate(current, src, "en")
+    if src != EN and translator is not None:
+        current = translator.translate(current, src, EN)
 
     return current
 
 
 if __name__ == "__main__":
-    from languages import LANGUAGES
     from argparse import ArgumentParser
+    from languages import LANGUAGES
+    from translators import TRANSLATORS
 
     parser = ArgumentParser(prog="Babel", description="Nonsense")
     parser.add_argument("-t", "--text", help="Text to translate", required=True)
     parser.add_argument("-n", help="number of times to iterate", default=10)
     args = parser.parse_args()
 
-    output = text_bable(args.text, LANGUAGES, iterations=args.n)
+    output = text_bable(args.text, TRANSLATORS, LANGUAGES, iterations=args.n)
 
     print(output)
