@@ -1,5 +1,6 @@
 from languages import Lang, EN
 from translators import Translator
+import os
 import random
 
 
@@ -39,12 +40,31 @@ if __name__ == "__main__":
     from translators import TRANSLATORS
 
     parser = ArgumentParser(prog="Babel", description="Nonsense")
-    parser.add_argument("-t", "--text", help="Text to translate", required=True)
-    parser.add_argument("-n", help="number of times to iterate", default=10, type=int)
+    parser.add_argument("-t", "--text", help="Text to translate", required=False)
+    parser.add_argument(
+        "-i", "--input", help="Text to translate from a file", required=False
+    )
+    parser.add_argument(
+        "-o", "--output", help="Where to write the text output", required=False
+    )
+    parser.add_argument("-n", help="Number of times to iterate", default=10, type=int)
     args = parser.parse_args()
 
-    output = text_bable(
-        args.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n
+    text = args.text
+
+    if args.input is not None:
+        with open(args.input) as f:
+            text = f.read()
+
+    output = os.linesep.join(
+        [
+            text_bable(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
+            for text in text.splitlines()
+        ]
     )
 
-    print(output)
+    if args.output is not None:
+        with open(args.output, "w") as f:
+            f.write(output)
+    else:
+        print(output)
