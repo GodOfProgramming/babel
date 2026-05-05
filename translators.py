@@ -59,7 +59,9 @@ class MarianTranslator(Translator):
 
         return tokenizer.decode(generated[0], skip_special_tokens=True)
 
-    def load_model(self, src: str, target: str) -> (MarianTokenizer, MarianMTModel):
+    def load_model(
+        self, src: str, target: str
+    ) -> tuple[MarianTokenizer, MarianMTModel]:
         key = f"{src}->{target}"
         if key in self._model_cache:
             return self._model_cache[key]
