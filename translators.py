@@ -7,6 +7,8 @@ from transformers import (
     MarianMTModel,
 )
 import torch
+import subprocess
+import os
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -101,6 +103,44 @@ class FacebookTranslator(Translator):
                 # temperature=1.2,
             )
         return self._tokenizer.decode(out[0], skip_special_tokens=True)
+
+
+class MosesTranslator(Translator):
+    def __init__(self, bin_path: str, model_path: str):
+        self.bin_path = bin_path
+        self.model_path = model_path
+
+    def name(self) -> str:
+        return "Moses"
+
+    def supports(self, src: Lang, target: Lang) -> bool:
+        return os.path.exists(self.ini_path(src, target))
+
+    def translate(self, text: str, src: Lang, target: Lang) -> str:
+        if src.id != "en":
+            result = subprocess.run(
+                [self.bin_path, "-f", self.ini_path(src, "en")],
+                input=text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            text = result.stdout
+
+        if target.id != "en":
+            result = subprocess.run(
+                [self.bin_path, "-f", self.ini_path("en", target)],
+                input=text,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            text = result.stdout
+
+        return text
+
+    def ini_path(self, src: Lang, target: Lang) -> str:
+        return f"{self.model_path}/{src.id}-{target.id}/model/moses.ini"
 
 
 TRANSLATORS = [MarianTranslator(LANGUAGES), FacebookTranslator(LANGUAGES)]
