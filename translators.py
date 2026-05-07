@@ -1,14 +1,15 @@
+import torch
+import subprocess
+import os
 from abc import abstractmethod
-from languages import LANGUAGES, Lang
+from languages import LANGUAGES, Lang, EN
+from sacremoses import MosesDetokenizer
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
     MarianTokenizer,
     MarianMTModel,
 )
-import torch
-import subprocess
-import os
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -36,7 +37,7 @@ class MarianTranslator(Translator):
 
     def __init__(self, languages: dict[Lang, dict[str, str]]):
         self._languages = _parse_langs(self.DICT_KEY, languages)
-        self._model_cache = {}
+        self._model_cache: dict[Lang, tuple[MarianTokenizer, MarianMTModel]] = {}
 
     def name(self) -> str:
         return "Marian"
@@ -111,15 +112,21 @@ class MosesTranslator(Translator):
     def __init__(self, bin_path: str, model_path: str):
         self.bin_path = bin_path
         self.model_path = model_path
+        self._esc_cache: dict[Lang, MosesDetokenizer] = dict()
 
     def name(self) -> str:
         return "Moses"
 
     def supports(self, src: Lang, target: Lang) -> bool:
-        return os.path.exists(self.ini_path(src, target))
+        if (src == EN and target != EN) or (src != EN and target == EN):
+            return os.path.exists(self.ini_path(src, target))
+        else:
+            return os.path.exists(self.ini_path(src, EN)) and os.path.exists(
+                self.ini_path(EN, target)
+            )
 
     def translate(self, text: str, src: Lang, target: Lang) -> str:
-        if src.id != "en":
+        if src != EN:
             result = subprocess.run(
                 [self.bin_path, "-f", self.ini_path(src, "en")],
                 input=text,
@@ -127,9 +134,9 @@ class MosesTranslator(Translator):
                 stderr=subprocess.DEVNULL,
                 text=True,
             )
-            text = result.stdout
+            text = self.unesc(result.stdout)
 
-        if target.id != "en":
+        if target != EN:
             result = subprocess.run(
                 [self.bin_path, "-f", self.ini_path("en", target)],
                 input=text,
@@ -137,12 +144,21 @@ class MosesTranslator(Translator):
                 stderr=subprocess.DEVNULL,
                 text=True,
             )
-            text = result.stdout
+            text = self.unesc(result.stdout)
 
         return text
 
     def ini_path(self, src: Lang, target: Lang) -> str:
         return f"{self.model_path}/{src.id}-{target.id}/model/moses.ini"
+
+    def unesc(self, text: str, lang: Lang):
+        if lang in self._esc_cache:
+            md = self._esc_cache[lang]
+        else:
+            md = MosesDetokenizer(lang=lang.id)
+            self._esc_cache[lang] = md
+        tokens = text.split()
+        return md.detokenize(tokens)
 
 
 TRANSLATORS = [MarianTranslator(LANGUAGES), FacebookTranslator(LANGUAGES)]

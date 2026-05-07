@@ -1,9 +1,70 @@
-from languages import Lang, EN
-from translators import Translator, DEVICE, MosesTranslator
 import os
-import sys
 import random
+import sys
+import uvicorn
+from argparse import ArgumentParser
+from fastapi import FastAPI
 from huggingface_hub import errors
+from languages import Lang, EN, LANGUAGES
+from pydantic import BaseModel
+from translators import Translator, TRANSLATORS, DEVICE, MosesTranslator
+
+
+def main():
+    parser = ArgumentParser(prog="Babel", description="Nonsense")
+    parser.add_argument("--serve", help="Run as a webserver", required=False, type=int)
+    parser.add_argument("-t", "--text", help="Text to translate", required=False)
+    parser.add_argument(
+        "-i", "--input", help="Text to translate from a file", required=False
+    )
+    parser.add_argument(
+        "-o", "--output", help="Where to write the text output", required=False
+    )
+    parser.add_argument("-n", help="Number of times to iterate", default=10, type=int)
+    parser.add_argument("--moses", help="Enable the moses translator")
+    parser.add_argument("--moses-models", help="Path to moses model location")
+    parser.add_argument(
+        "--cpu",
+        help="Allow cpu to be used for translating",
+        required=False,
+        action="store_true",
+    )
+    args = parser.parse_args()
+
+    if DEVICE == "cpu" and not args.cpu:
+        print("Use --cpu to allow for cpu translation", file=sys.stderr)
+        exit(1)
+
+    if args.moses is not None and len(args.moses) != 0:
+        if args.moses_models is not None and len(args.moses_models) == 0:
+            print(
+                "Use --moses-models to set the path to where the models are located",
+                file=sys.stderr,
+            )
+            exit(1)
+        TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
+
+    if args.serve is None:
+        text = args.text
+
+        if args.input is not None:
+            with open(args.input) as f:
+                text = f.read()
+
+        output = os.linesep.join(
+            [
+                text_bable(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
+                for text in text.splitlines()
+            ]
+        )
+
+        if args.output is not None:
+            with open(args.output, "w") as f:
+                f.write(output)
+        else:
+            print(output)
+    else:
+        run_server(args.serve)
 
 
 def text_bable(
@@ -53,58 +114,36 @@ def text_bable(
     return current
 
 
-if __name__ == "__main__":
-    from argparse import ArgumentParser
-    from languages import LANGUAGES
-    from translators import TRANSLATORS
+def run_server(port: int):
+    app = FastAPI()
 
-    parser = ArgumentParser(prog="Babel", description="Nonsense")
-    parser.add_argument("-t", "--text", help="Text to translate", required=False)
-    parser.add_argument(
-        "-i", "--input", help="Text to translate from a file", required=False
-    )
-    parser.add_argument(
-        "-o", "--output", help="Where to write the text output", required=False
-    )
-    parser.add_argument("-n", help="Number of times to iterate", default=10, type=int)
-    parser.add_argument("--moses", help="Enable the moses translator")
-    parser.add_argument("--moses-models", help="Path to moses model location")
-    parser.add_argument(
-        "--cpu",
-        help="Allow cpu to be used for translating",
-        required=False,
-        action="store_true",
-    )
-    args = parser.parse_args()
+    class TranslationRequest(BaseModel):
+        text: str
+        n: int
 
-    if DEVICE == "cpu" and not args.cpu:
-        print("Use --cpu to allow for cpu translation", file=sys.stderr)
-        exit(1)
+    @app.post("/translate")
+    def translate(request: TranslationRequest):
+        output = text_bable(
+            request.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
+        )
+        return output
 
-    if len(args.moses) != 0:
-        if len(args.moses_models) == 0:
-            print(
-                "Use --moses-models to set the path to where the models are located",
-                file=sys.stderr,
+    class BatchTranslationRequest(BaseModel):
+        n: int
+        batch: dict[str, str]
+
+    @app.post("/translate/batch")
+    def translate_batch(request: BatchTranslationRequest):
+        batch = dict()
+
+        for k, v in request.batch.items():
+            batch[k] = text_bable(
+                v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
             )
-            exit(1)
-        TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
+        return batch
 
-    text = args.text
+    uvicorn.run(app, host="localhost", port=port, reload=False)
 
-    if args.input is not None:
-        with open(args.input) as f:
-            text = f.read()
 
-    output = os.linesep.join(
-        [
-            text_bable(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
-            for text in text.splitlines()
-        ]
-    )
-
-    if args.output is not None:
-        with open(args.output, "w") as f:
-            f.write(output)
-    else:
-        print(output)
+if __name__ == "__main__":
+    main()
