@@ -3,12 +3,12 @@ import random
 import sys
 import uvicorn
 from argparse import ArgumentParser
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Response
 from huggingface_hub import errors
 from languages import Lang, EN, LANGUAGES
 from pydantic import BaseModel
 from translators import Translator, TRANSLATORS, DEVICE, MosesTranslator
-from util import ModelParser
+from util import ModelParser, Content
 
 
 def main():
@@ -145,17 +145,21 @@ def run_server(port: int):
 
     @app.post("/translate/batch")
     def translate_batch(
-        request: BatchTranslationRequest = Depends(
+        request: Content[BatchTranslationRequest] = Depends(
             ModelParser(BatchTranslationRequest)
         ),
     ):
         batch = dict()
 
-        for k, v in request.batch.items():
+        for k, v in request.model.batch.items():
             batch[k] = text_babel(
-                v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
+                v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.model.n
             )
-        return batch
+
+        return Response(
+            content=request.converter(batch),
+            headers=request.converter.headers(),
+        )
 
     uvicorn.run(app, host="localhost", port=port, reload=False)
 
