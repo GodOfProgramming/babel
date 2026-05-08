@@ -13,6 +13,9 @@ from translators import Translator, TRANSLATORS, DEVICE, MosesTranslator
 def main():
     parser = ArgumentParser(prog="Babel", description="Nonsense")
     parser.add_argument("--serve", help="Run as a webserver", required=False, type=int)
+    parser.add_argument(
+        "--moses-only", help="Only use moses", required=False, action="store_true"
+    )
     parser.add_argument("-t", "--text", help="Text to translate", required=False)
     parser.add_argument(
         "-i", "--input", help="Text to translate from a file", required=False
@@ -35,14 +38,19 @@ def main():
         print("Use --cpu to allow for cpu translation", file=sys.stderr)
         exit(1)
 
-    if args.moses is not None and len(args.moses) != 0:
-        if args.moses_models is not None and len(args.moses_models) == 0:
+    if args.moses is not None:
+        if not os.path.exists(args.moses) or not os.path.exists(args.moses_models):
             print(
                 "Use --moses-models to set the path to where the models are located",
                 file=sys.stderr,
             )
             exit(1)
-        TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
+
+        if args.moses_only:
+            TRANSLATORS.clear()
+            TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
+        else:
+            TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
 
     if args.serve is None:
         text = args.text
@@ -53,7 +61,7 @@ def main():
 
         output = os.linesep.join(
             [
-                text_bable(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
+                text_babel(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
                 for text in text.splitlines()
             ]
         )
@@ -67,10 +75,11 @@ def main():
         run_server(args.serve)
 
 
-def text_bable(
+def text_babel(
     text: str, translators: list[Translator], languages: list[Lang], iterations=10
 ) -> str:
-    current = text
+    print(f"Translating {text}", file=sys.stderr)
+
     src = EN
     i = 0
     translator = None
@@ -84,10 +93,11 @@ def text_bable(
                     file=sys.stderr,
                 )
                 continue
+            text = translator.translate(text, src, target)
             print(
-                f"Translating {src}->{target} with {translator.name()}", file=sys.stderr
+                f"Translated {src}->{target} with {translator.name()}: {text}",
+                file=sys.stderr,
             )
-            current = translator.translate(current, src, target)
             src = target
             i += 1
         except EnvironmentError:
@@ -101,7 +111,7 @@ def text_bable(
         if i >= iterations:
             if src != EN and translator is not None:
                 try:
-                    current = translator.translate(current, src, EN)
+                    text = translator.translate(text, src, EN)
                 except errors.RepositoryNotFoundError:
                     print(
                         f"Failed to translate {src}->{EN}, rerolling with another language",
@@ -111,7 +121,7 @@ def text_bable(
 
             break
 
-    return current
+    return text
 
 
 def run_server(port: int):
@@ -123,7 +133,7 @@ def run_server(port: int):
 
     @app.post("/translate")
     def translate(request: TranslationRequest):
-        output = text_bable(
+        output = text_babel(
             request.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
         )
         return output
@@ -137,7 +147,7 @@ def run_server(port: int):
         batch = dict()
 
         for k, v in request.batch.items():
-            batch[k] = text_bable(
+            batch[k] = text_babel(
                 v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
             )
         return batch

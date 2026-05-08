@@ -128,23 +128,27 @@ class MosesTranslator(Translator):
     def translate(self, text: str, src: Lang, target: Lang) -> str:
         if src != EN:
             result = subprocess.run(
-                [self.bin_path, "-f", self.ini_path(src, "en")],
-                input=text,
+                [self.bin_path, "-f", self.ini_path(src, EN)],
+                input=ensure_newline(text),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 text=True,
+                check=True,
             )
-            text = self.unesc(result.stdout)
+
+            text = self.unesc(result.stdout, EN)
 
         if target != EN:
             result = subprocess.run(
-                [self.bin_path, "-f", self.ini_path("en", target)],
-                input=text,
+                [self.bin_path, "-f", self.ini_path(EN, target)],
+                input=ensure_newline(text),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 text=True,
+                check=True,
             )
-            text = self.unesc(result.stdout)
+
+            text = self.unesc(result.stdout, target)
 
         return text
 
@@ -159,6 +163,13 @@ class MosesTranslator(Translator):
             self._esc_cache[lang] = md
         tokens = text.split()
         return md.detokenize(tokens)
+
+
+def ensure_newline(text: str) -> str:
+    if not text.endswith("\n"):
+        return f"{text}\n"
+    else:
+        return text
 
 
 TRANSLATORS = [MarianTranslator(LANGUAGES), FacebookTranslator(LANGUAGES)]
