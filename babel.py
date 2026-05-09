@@ -26,8 +26,6 @@ def main():
         "-o", "--output", help="Where to write the text output", required=False
     )
     parser.add_argument("-n", help="Number of times to iterate", default=10, type=int)
-    parser.add_argument("--moses", help="Enable the moses translator")
-    parser.add_argument("--moses-models", help="Path to moses model location")
     parser.add_argument(
         "--cpu",
         help="Allow cpu to be used for translating",
@@ -40,19 +38,7 @@ def main():
         print("Use --cpu to allow for cpu translation", file=sys.stderr)
         exit(1)
 
-    if args.moses is not None:
-        if not os.path.exists(args.moses) or not os.path.exists(args.moses_models):
-            print(
-                "Use --moses-models to set the path to where the models are located",
-                file=sys.stderr,
-            )
-            exit(1)
-
-        if args.moses_only:
-            TRANSLATORS.clear()
-            TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
-        else:
-            TRANSLATORS.append(MosesTranslator(args.moses, args.moses_models))
+    inject_moses(args.moses_only)
 
     if args.serve is None:
         text = args.text
@@ -163,6 +149,31 @@ def run_server(port: int):
         )
 
     uvicorn.run(app, host="localhost", port=port, reload=False)
+
+
+def inject_moses(only_moses: bool):
+    moses_bin = os.getenv("BABEL_MOSES_BIN")
+    moses_models = os.getenv("BABEL_MOSES_MODELS")
+    if moses_bin is not None:
+        if not os.path.exists(moses_bin):
+            print(
+                "Set the BABEL_MOSES_BIN to set the path to where moses is located",
+                file=sys.stderr,
+            )
+            exit(1)
+
+        if not os.path.exists(moses_models):
+            print(
+                "Set the BABEL_MOSES_MODELS to set the path to where the models are located",
+                file=sys.stderr,
+            )
+            exit(1)
+
+        if only_moses:
+            TRANSLATORS.clear()
+            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
+        else:
+            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
 
 
 if __name__ == "__main__":
