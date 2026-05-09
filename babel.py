@@ -9,6 +9,7 @@ from languages import Lang, EN, LANGUAGES
 from pydantic import BaseModel
 from translators import Translator, TRANSLATORS, DEVICE, MosesTranslator
 from util import ModelParser, Content
+from unidecode import unidecode
 
 
 def main():
@@ -122,7 +123,7 @@ def text_babel(
 
             break
 
-    return text
+    return unidecode(text)
 
 
 def run_server(port: int):
