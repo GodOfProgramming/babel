@@ -1,15 +1,22 @@
-import torch
-import subprocess
+import gc
 import os
+import random
+import subprocess
+import sys
+import torch
 from abc import abstractmethod
+from dataclasses import dataclass
+from huggingface_hub import errors
 from languages import LANGUAGES, Lang, EN
 from sacremoses import MosesDetokenizer
+from typing import Optional
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
     MarianTokenizer,
     MarianMTModel,
 )
+from unidecode import unidecode
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -35,9 +42,14 @@ def _parse_langs(key: str, languages: dict[Lang, dict[str, str]]) -> dict[Lang, 
 class MarianTranslator(Translator):
     DICT_KEY = "marian"
 
+    @dataclass
+    class ModelData:
+        tokenizer: MarianTokenizer
+        model: MarianMTModel
+
     def __init__(self, languages: dict[Lang, dict[str, str]]):
         self._languages = _parse_langs(self.DICT_KEY, languages)
-        self._model_cache: dict[Lang, tuple[MarianTokenizer, MarianMTModel]] = {}
+        self._model_cache: dict[Lang, MarianTranslator.ModelData] = {}
 
     def name(self) -> str:
         return "Marian"
@@ -48,30 +60,51 @@ class MarianTranslator(Translator):
     def translate(self, text: str, src: Lang, target: Lang) -> str:
         src = self._languages[src]
         target = self._languages[target]
-        tokenizer, model = self.load_model(src, target)
 
-        batch = tokenizer(text, return_tensors="pt", padding=True).to(DEVICE)
+        data = self.load_model(src, target)
+        batch = data.tokenizer(text, return_tensors="pt", padding=True).to(DEVICE)
+
         with torch.no_grad():
-            generated = model.generate(
+            generated = data.model.generate(
                 **batch,
                 # top_k=50,
                 # temperature=1.2,
             )
 
-        return tokenizer.decode(generated[0], skip_special_tokens=True)
+        return data.tokenizer.decode(generated[0], skip_special_tokens=True)
 
-    def load_model(
-        self, src: str, target: str
-    ) -> tuple[MarianTokenizer, MarianMTModel]:
+    def load_model(self, src: str, target: str) -> MarianTranslator.ModelData:
         key = f"{src}->{target}"
+
+        if DEVICE == "cuda":
+            self.gc_check(key)
+
         if key in self._model_cache:
             return self._model_cache[key]
 
         model_name = f"Helsinki-NLP/opus-mt-{src}-{target}"
         tokenizer = MarianTokenizer.from_pretrained(model_name)
         model = MarianMTModel.from_pretrained(model_name).to(DEVICE)
-        self._model_cache[key] = (tokenizer, model)
-        return tokenizer, model
+
+        data = MarianTranslator.ModelData(tokenizer, model)
+        self._model_cache[key] = data
+
+        return data
+
+    def gc_check(self, current_key: str):
+        used = self.get_vram_usage_percentage()
+        if used > 0.70:
+            for key in self._model_cache.keys():
+                if key != current_key:
+                    del self._model_cache[key]
+
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    def get_vram_usage_percentage(self):
+        free_vram, total_vram = torch.cuda.mem_get_info()
+        used_vram = total_vram - free_vram
+        return used_vram / total_vram
 
 
 class FacebookTranslator(Translator):
@@ -173,3 +206,89 @@ def ensure_newline(text: str) -> str:
 
 
 TRANSLATORS = [MarianTranslator(LANGUAGES), FacebookTranslator(LANGUAGES)]
+
+
+def translate(
+    text: str, translators: list[Translator], languages: list[Lang], iterations=10
+) -> str:
+    print(f"Translating {text}", file=sys.stderr)
+
+    src = EN
+    i = 0
+    translator = None
+    while True:
+        translator = random.choice(translators)
+        target = random.choice(languages)
+        result = try_translate(translator, src, target, text)
+
+        if result is not None:
+            text = result
+            src = target
+            i += 1
+
+        if i >= iterations:
+            if src != EN:
+                result = try_translate(random.choice(translators), src, EN, text)
+
+                if result is not None:
+                    text = result
+                else:
+                    continue
+
+            break
+
+    return unidecode(text)
+
+
+def try_translate(
+    translator: Translator, src: Lang, target: Lang, text: str
+) -> Optional[str]:
+    try:
+        if not translator.supports(src, target):
+            print(
+                f"{translator.name()} does not support {src}->{target}",
+                file=sys.stderr,
+            )
+            return None
+
+        text = translator.translate(text, src, target)
+
+        print(
+            f"Translated {src}->{target} with {translator.name()}: {text}",
+            file=sys.stderr,
+        )
+    except EnvironmentError:
+        return None
+    except errors.RepositoryNotFoundError:
+        print(
+            f"Failed to acquire {src}-{target} with {translator.name()}",
+            file=sys.stderr,
+        )
+        return None
+
+    return text
+
+
+def inject_moses(only_moses: bool):
+    moses_bin = os.getenv("BABEL_MOSES_BIN")
+    moses_models = os.getenv("BABEL_MOSES_MODELS")
+    if moses_bin is not None:
+        if not os.path.exists(moses_bin):
+            print(
+                "Set the BABEL_MOSES_BIN to set the path to where moses is located",
+                file=sys.stderr,
+            )
+            exit(1)
+
+        if not os.path.exists(moses_models):
+            print(
+                "Set the BABEL_MOSES_MODELS to set the path to where the models are located",
+                file=sys.stderr,
+            )
+            exit(1)
+
+        if only_moses:
+            TRANSLATORS.clear()
+            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
+        else:
+            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))

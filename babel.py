@@ -1,15 +1,6 @@
 import os
-import random
 import sys
-import uvicorn
 from argparse import ArgumentParser
-from fastapi import FastAPI, Depends, Response
-from huggingface_hub import errors
-from languages import Lang, EN, LANGUAGES
-from pydantic import BaseModel
-from translators import Translator, TRANSLATORS, DEVICE, MosesTranslator
-from util import ModelParser, Content
-from unidecode import unidecode
 
 
 def main():
@@ -34,6 +25,9 @@ def main():
     )
     args = parser.parse_args()
 
+    from languages import LANGUAGES
+    from translators import TRANSLATORS, DEVICE, translate, inject_moses
+
     if DEVICE == "cpu" and not args.cpu:
         print("Use --cpu to allow for cpu translation", file=sys.stderr)
         exit(1)
@@ -49,7 +43,7 @@ def main():
 
         output = os.linesep.join(
             [
-                text_babel(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
+                translate(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
                 for text in text.splitlines()
             ]
         )
@@ -60,120 +54,9 @@ def main():
         else:
             print(output)
     else:
-        run_server(args.serve)
+        import serve
 
-
-def text_babel(
-    text: str, translators: list[Translator], languages: list[Lang], iterations=10
-) -> str:
-    print(f"Translating {text}", file=sys.stderr)
-
-    src = EN
-    i = 0
-    translator = None
-    while True:
-        translator = random.choice(translators)
-        target = random.choice(languages)
-        try:
-            if not translator.supports(src, target):
-                print(
-                    f"{translator.name()} does not support {src}->{target}",
-                    file=sys.stderr,
-                )
-                continue
-            text = translator.translate(text, src, target)
-            print(
-                f"Translated {src}->{target} with {translator.name()}: {text}",
-                file=sys.stderr,
-            )
-            src = target
-            i += 1
-        except EnvironmentError:
-            continue
-        except errors.RepositoryNotFoundError:
-            print(
-                f"Failed to acquire {src}-{target} with {translator.name()}",
-                file=sys.stderr,
-            )
-            continue
-        if i >= iterations:
-            if src != EN and translator is not None:
-                try:
-                    text = translator.translate(text, src, EN)
-                except errors.RepositoryNotFoundError:
-                    print(
-                        f"Failed to translate {src}->{EN}, rerolling with another language",
-                        file=sys.stderr,
-                    )
-                    continue
-
-            break
-
-    return unidecode(text)
-
-
-def run_server(port: int):
-    app = FastAPI()
-
-    class TranslationRequest(BaseModel):
-        text: str
-        n: int
-
-    @app.post("/translate")
-    def translate(request: TranslationRequest):
-        output = text_babel(
-            request.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
-        )
-        return output
-
-    class BatchTranslationRequest(BaseModel):
-        n: int
-        batch: dict[str, str]
-
-    @app.post("/translate/batch")
-    def translate_batch(
-        request: Content[BatchTranslationRequest] = Depends(
-            ModelParser(BatchTranslationRequest)
-        ),
-    ):
-        batch = dict()
-
-        for k, v in request.model.batch.items():
-            batch[k] = text_babel(
-                v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.model.n
-            )
-
-        return Response(
-            content=request.converter(batch),
-            headers=request.converter.headers(),
-        )
-
-    uvicorn.run(app, host="localhost", port=port, reload=False)
-
-
-def inject_moses(only_moses: bool):
-    moses_bin = os.getenv("BABEL_MOSES_BIN")
-    moses_models = os.getenv("BABEL_MOSES_MODELS")
-    if moses_bin is not None:
-        if not os.path.exists(moses_bin):
-            print(
-                "Set the BABEL_MOSES_BIN to set the path to where moses is located",
-                file=sys.stderr,
-            )
-            exit(1)
-
-        if not os.path.exists(moses_models):
-            print(
-                "Set the BABEL_MOSES_MODELS to set the path to where the models are located",
-                file=sys.stderr,
-            )
-            exit(1)
-
-        if only_moses:
-            TRANSLATORS.clear()
-            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
-        else:
-            TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
+        serve.run_server(args.serve)
 
 
 if __name__ == "__main__":
