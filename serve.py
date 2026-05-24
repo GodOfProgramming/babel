@@ -19,7 +19,7 @@ class TranslationRequest(BaseModel):
 
 
 @app.post("/translate")
-def translate(request: TranslationRequest):
+def app_translate(request: TranslationRequest):
     output = translate(
         request.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
     )
@@ -32,7 +32,7 @@ class BatchTranslationRequest(BaseModel):
 
 
 @app.post("/translate/batch")
-def translate_batch(
+def app_translate_batch(
     request: Content[BatchTranslationRequest] = Depends(
         ModelParser(BatchTranslationRequest)
     ),

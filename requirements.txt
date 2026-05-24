@@ -8,3 +8,4 @@ hf_xet
 sacremoses
 huggingface-hub
 unidecode
+fasttext

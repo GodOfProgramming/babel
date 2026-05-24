@@ -1,3 +1,4 @@
+import fasttext
 import gc
 import os
 import random
@@ -5,9 +6,10 @@ import subprocess
 import sys
 import torch
 from abc import abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass
 from huggingface_hub import errors
-from languages import LANGUAGES, Lang, EN
+from languages import LANGUAGES, LanguageMap, Lang, EN
 from sacremoses import MosesDetokenizer
 from typing import Optional
 from transformers import (
@@ -15,6 +17,7 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     MarianTokenizer,
     MarianMTModel,
+    pipeline,
 )
 from unidecode import unidecode
 
@@ -22,6 +25,8 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class Translator:
+    WEIGHT = 1
+
     @abstractmethod
     def name(self) -> str:
         pass
@@ -35,7 +40,7 @@ class Translator:
         pass
 
 
-def _parse_langs(key: str, languages: dict[Lang, dict[str, str]]) -> dict[Lang, str]:
+def _parse_langs(key: str, languages: LanguageMap) -> dict[Lang, str]:
     return {k: v[key] for k, v in languages.items() if v[key] is not None}
 
 
@@ -47,9 +52,9 @@ class MarianTranslator(Translator):
         tokenizer: MarianTokenizer
         model: MarianMTModel
 
-    def __init__(self, languages: dict[Lang, dict[str, str]]):
+    def __init__(self, languages: LanguageMap):
         self._languages = _parse_langs(self.DICT_KEY, languages)
-        self._model_cache: dict[Lang, MarianTranslator.ModelData] = {}
+        self._model_cache: OrderedDict[str, MarianTranslator.ModelData] = OrderedDict()
 
     def name(self) -> str:
         return "Marian"
@@ -58,10 +63,10 @@ class MarianTranslator(Translator):
         return src in self._languages and target in self._languages
 
     def translate(self, text: str, src: Lang, target: Lang) -> str:
-        src = self._languages[src]
-        target = self._languages[target]
+        src_id = self._languages[src]
+        target_id = self._languages[target]
 
-        data = self.load_model(src, target)
+        data = self.load_model(src_id, target_id)
         batch = data.tokenizer(text, return_tensors="pt", padding=True).to(DEVICE)
 
         with torch.no_grad():
@@ -71,13 +76,21 @@ class MarianTranslator(Translator):
                 # temperature=1.2,
             )
 
-        return data.tokenizer.decode(generated[0], skip_special_tokens=True)
+        sentence = data.tokenizer.decode(generated[0], skip_special_tokens=True)
+
+        if isinstance(sentence, list):
+            return "\n".join(sentence)
+        else:
+            return sentence
 
     def load_model(self, src: str, target: str) -> MarianTranslator.ModelData:
         key = f"{src}->{target}"
 
+        if key in self._model_cache:
+            self._model_cache.move_to_end(key)
+
         if DEVICE == "cuda":
-            self.gc_check(key)
+            self.gc_check()
 
         if key in self._model_cache:
             return self._model_cache[key]
@@ -86,18 +99,28 @@ class MarianTranslator(Translator):
         tokenizer = MarianTokenizer.from_pretrained(model_name)
         model = MarianMTModel.from_pretrained(model_name).to(DEVICE)
 
-        data = MarianTranslator.ModelData(tokenizer, model)
+        data = MarianTranslator.ModelData(tokenizer=tokenizer, model=model)
         self._model_cache[key] = data
 
         return data
 
-    def gc_check(self, current_key: str):
-        used = self.get_vram_usage_percentage()
-        if used > 0.70:
-            for key in self._model_cache.keys():
-                if key != current_key:
-                    del self._model_cache[key]
+    def gc_check(self):
+        cleared = False
+        while True:
+            used = self.get_vram_usage_percentage()
+            if used < 0.90 or len(self._model_cache) == 0:
+                break
 
+            key, data = self._model_cache.popitem(last=False)
+            model_size = self.model_size(data.model)
+            print(
+                f"Freeing {model_size // (1024 ** 2)} MB from Marian cache ({key})",
+                file=sys.stderr,
+            )
+            del data
+            cleared = True
+
+        if cleared:
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -106,12 +129,17 @@ class MarianTranslator(Translator):
         used_vram = total_vram - free_vram
         return used_vram / total_vram
 
+    def model_size(self, model: MarianMTModel) -> int:
+        param_size = sum(p.nelement() * p.element_size() for p in model.parameters())
+        buffer_size = sum(b.nelement() * b.element_size() for b in model.buffers())
+        return param_size + buffer_size
 
-class FacebookTranslator(Translator):
+
+class NllbTranslator(Translator):
     DICT_KEY = "nllb"
     MODEL_NAME = "facebook/nllb-200-distilled-600M"
 
-    def __init__(self, languages: dict[Lang, dict[str, str]]):
+    def __init__(self, languages: LanguageMap):
         self._languages = _parse_langs(self.DICT_KEY, languages)
         self._tokenizer = AutoTokenizer.from_pretrained(self.MODEL_NAME)
         self._model = AutoModelForSeq2SeqLM.from_pretrained(self.MODEL_NAME).to(DEVICE)
@@ -123,17 +151,17 @@ class FacebookTranslator(Translator):
         return src in self._languages and target in self._languages
 
     def translate(self, text: str, src: Lang, target: Lang) -> str:
-        src = self._languages[src]
-        target = self._languages[target]
+        src_id = self._languages[src]
+        target_id = self._languages[target]
 
-        self._tokenizer.src_lang = src
+        self._tokenizer.src_lang = src_id
 
         encoded = self._tokenizer(text, return_tensors="pt", padding=True).to(DEVICE)
 
         with torch.no_grad():
             out = self._model.generate(
                 **encoded,
-                forced_bos_token_id=self._tokenizer.convert_tokens_to_ids(target),
+                forced_bos_token_id=self._tokenizer.convert_tokens_to_ids(target_id),
                 do_sample=True,
                 # top_k=50,
                 # temperature=1.2,
@@ -142,6 +170,8 @@ class FacebookTranslator(Translator):
 
 
 class MosesTranslator(Translator):
+    WEIGHT = 2
+
     def __init__(self, bin_path: str, model_path: str):
         self.bin_path = bin_path
         self.model_path = model_path
@@ -205,7 +235,42 @@ def ensure_newline(text: str) -> str:
         return text
 
 
-TRANSLATORS = [MarianTranslator(LANGUAGES), FacebookTranslator(LANGUAGES)]
+NLLB_TRANSLATOR_INSTANCE = NllbTranslator(LANGUAGES)
+
+TRANSLATORS = [MarianTranslator(LANGUAGES), NLLB_TRANSLATOR_INSTANCE]
+
+
+class EnglishChecker:
+    def __init__(self):
+        # fetch from https://fasttext.cc/docs/en/language-identification.html
+        self.model = fasttext.load_model("lid.176.bin")
+
+    def validate(self, text: str) -> str:
+        try:
+            predictions = self.model.predict(text, k=1)
+            detected_lang = predictions[0][0].replace("__label__", "")
+            confidence = predictions[1][0]
+
+            if detected_lang == "en" and confidence > 0.85:
+                return text
+
+            src = Lang(detected_lang)
+
+            if NLLB_TRANSLATOR_INSTANCE.supports(src, EN):
+                print(
+                    f"Force translating to english, detected language {detected_lang} ({confidence * 100}%)",
+                    file=sys.stderr,
+                )
+
+                output = try_translate(NLLB_TRANSLATOR_INSTANCE, src, EN, text)
+                return output or text
+
+            return text
+        except:
+            return text
+
+
+CHECKER = EnglishChecker()
 
 
 def translate(
@@ -216,16 +281,8 @@ def translate(
     src = EN
     i = 0
     translator = None
+    weights = [t.WEIGHT for t in translators]
     while True:
-        translator = random.choice(translators)
-        target = random.choice(languages)
-        result = try_translate(translator, src, target, text)
-
-        if result is not None:
-            text = result
-            src = target
-            i += 1
-
         if i >= iterations:
             if src != EN:
                 result = try_translate(random.choice(translators), src, EN, text)
@@ -237,7 +294,23 @@ def translate(
 
             break
 
-    return unidecode(text)
+        translator = random.choices(
+            translators,
+            weights=weights,
+            k=1,
+        )[0]
+
+        target = random.choice(languages)
+        result = try_translate(translator, src, target, text)
+
+        if result is not None:
+            text = result
+            src = target
+            i += 1
+
+    output = CHECKER.validate(unidecode(text))
+
+    return output
 
 
 def try_translate(
@@ -257,13 +330,13 @@ def try_translate(
             f"Translated {src}->{target} with {translator.name()}: {text}",
             file=sys.stderr,
         )
-    except EnvironmentError:
-        return None
     except errors.RepositoryNotFoundError:
         print(
             f"Failed to acquire {src}-{target} with {translator.name()}",
             file=sys.stderr,
         )
+        return None
+    except EnvironmentError:
         return None
 
     return text
@@ -272,7 +345,7 @@ def try_translate(
 def inject_moses(only_moses: bool):
     moses_bin = os.getenv("BABEL_MOSES_BIN")
     moses_models = os.getenv("BABEL_MOSES_MODELS")
-    if moses_bin is not None:
+    if moses_bin is not None and moses_models is not None:
         if not os.path.exists(moses_bin):
             print(
                 "Set the BABEL_MOSES_BIN to set the path to where moses is located",
