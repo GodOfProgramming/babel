@@ -1,6 +1,7 @@
 import os
 import sys
 from argparse import ArgumentParser
+from util import log
 
 
 def main():
@@ -23,13 +24,19 @@ def main():
         required=False,
         action="store_true",
     )
+    parser.add_argument(
+        "--no-newline",
+        help="Strip the trailing newline",
+        required=False,
+        action="store_true",
+    )
     args = parser.parse_args()
 
     from languages import LANGUAGES
     from translators import TRANSLATORS, DEVICE, translate, inject_moses
 
     if DEVICE == "cpu" and not args.cpu:
-        print("Use --cpu to allow for cpu translation", file=sys.stderr)
+        log("Use --cpu to allow for cpu translation")
         exit(1)
 
     inject_moses(args.moses_only)
@@ -52,7 +59,8 @@ def main():
             with open(args.output, "w") as f:
                 f.write(output)
         else:
-            print(output)
+            end = None if args.no_newline else os.linesep
+            print(output, end=end)
     else:
         import serve
 

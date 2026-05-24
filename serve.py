@@ -1,3 +1,4 @@
+import os
 import textwrap
 import uvicorn
 from fastapi import FastAPI, Depends, Response
@@ -5,7 +6,7 @@ from languages import LANGUAGES
 from pydantic import BaseModel
 from translators import TRANSLATORS, translate
 from typing import Optional
-from util import ModelParser, Content
+from util import ModelParser, Content, log
 
 app = FastAPI()
 
@@ -28,10 +29,13 @@ def app_translate(request: TranslationRequest):
     return output
 
 
+type Batch = dict[str, "str | Batch"]
+
+
 class BatchTranslationRequest(BaseModel):
     n: int
-    options: Optional[dict[str, int | str]]
-    batch: dict[str, str]
+    batch: Batch
+    options: Optional[dict[str, int | str]] = None
 
 
 @app.post("/translate/batch")
@@ -40,8 +44,6 @@ def app_translate_batch(
         ModelParser(BatchTranslationRequest)
     ),
 ):
-    batch = dict()
-
     if request.model.options is not None and "wrap" in request.model.options:
         wrap = request.model.options["wrap"]
         if isinstance(wrap, str):
@@ -49,20 +51,24 @@ def app_translate_batch(
     else:
         wrap = None
 
-    for k, t in request.model.batch.items():
-        if "_IGNORE_" in k:
-            batch[k] = t
-        else:
-            output = translate(
-                t, TRANSLATORS, LANGUAGE_KEYS, iterations=request.model.n
-            )
-
-            if wrap is not None:
-                output = "\n".join(textwrap.wrap(output, width=wrap))
-
-            batch[k] = output
+    recursive_translate(request.model.batch, iterations=request.model.n, wrap=wrap)
 
     return Response(
-        content=request.converter(batch),
+        content=request.converter(request.model.batch),
         headers=request.converter.headers(),
     )
+
+
+def recursive_translate(batch: Batch, iterations: int, wrap=None):
+
+    for k, b in batch.items():
+        if "_IGNORE_" not in k:
+            if isinstance(b, dict):
+                recursive_translate(b, iterations, wrap)
+            else:
+                output = translate(b, TRANSLATORS, LANGUAGE_KEYS, iterations=iterations)
+
+                if wrap is not None:
+                    output = os.linesep.join(textwrap.wrap(output, width=wrap))
+
+                batch[k] = output

@@ -79,7 +79,7 @@ class MarianTranslator(Translator):
         sentence = data.tokenizer.decode(generated[0], skip_special_tokens=True)
 
         if isinstance(sentence, list):
-            return "\n".join(sentence)
+            return os.linesep.join(sentence)
         else:
             return sentence
 
@@ -229,8 +229,8 @@ class MosesTranslator(Translator):
 
 
 def ensure_newline(text: str) -> str:
-    if not text.endswith("\n"):
-        return f"{text}\n"
+    if not text.endswith(os.linesep):
+        return f"{text}{os.linesep}"
     else:
         return text
 

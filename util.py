@@ -1,11 +1,16 @@
 import json
 import yaml
+import sys
 from abc import abstractmethod
 from fastapi import Request, HTTPException
 from pydantic import BaseModel, ValidationError
 from typing import Type, TypeVar, Any, Generic
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def log(msg: str):
+    print(msg, file=sys.stderr)
 
 
 class Converter:
