@@ -7,6 +7,8 @@ from util import ModelParser, Content
 
 app = FastAPI()
 
+LANGUAGE_KEYS = list(LANGUAGES.keys())
+
 
 def run_server(port: int):
 
@@ -20,9 +22,7 @@ class TranslationRequest(BaseModel):
 
 @app.post("/translate")
 def app_translate(request: TranslationRequest):
-    output = translate(
-        request.text, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.n
-    )
+    output = translate(request.text, TRANSLATORS, LANGUAGE_KEYS, iterations=request.n)
     return output
 
 
@@ -39,10 +39,13 @@ def app_translate_batch(
 ):
     batch = dict()
 
-    for k, v in request.model.batch.items():
-        batch[k] = translate(
-            v, TRANSLATORS, list(LANGUAGES.keys()), iterations=request.model.n
-        )
+    for k, t in request.model.batch.items():
+        if "_IGNORE_" in k:
+            batch[k] = t
+        else:
+            batch[k] = translate(
+                t, TRANSLATORS, LANGUAGE_KEYS, iterations=request.model.n
+            )
 
     return Response(
         content=request.converter(batch),
