@@ -30,6 +30,10 @@ def main():
         required=False,
         action="store_true",
     )
+    parser.add_argument(
+        "--temp", help="Temperature setting", required=False, type=float
+    )
+    parser.add_argument("--topk", help="Top K result setting", required=False, type=int)
     args = parser.parse_args()
 
     from languages import LANGUAGES
@@ -50,7 +54,14 @@ def main():
 
         output = os.linesep.join(
             [
-                translate(text, TRANSLATORS, list(LANGUAGES.keys()), iterations=args.n)
+                translate(
+                    text,
+                    TRANSLATORS,
+                    list(LANGUAGES.keys()),
+                    iterations=args.n,
+                    temp=args.temp,
+                    top_k=args.topk,
+                )
                 for text in text.splitlines()
             ]
         )

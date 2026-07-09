@@ -33,7 +33,7 @@ class JsonConverter(Converter):
 
 class YamlConverter(Converter):
     def __call__(self, data: Any) -> Any:
-        return yaml.dump(data, width=28)
+        return yaml.dump(data)
 
     def headers(self):
         return {"Content-Type": "application/x-yaml"}

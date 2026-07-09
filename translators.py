@@ -2,8 +2,10 @@ import fasttext
 import gc
 import os
 import random
+import re
 import subprocess
 import sys
+import textwrap
 import torch
 from abc import abstractmethod
 from collections import OrderedDict
@@ -17,7 +19,6 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     MarianTokenizer,
     MarianMTModel,
-    pipeline,
 )
 from unidecode import unidecode
 
@@ -25,8 +26,6 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class Translator:
-    WEIGHT = 1
-
     @abstractmethod
     def name(self) -> str:
         pass
@@ -36,12 +35,19 @@ class Translator:
         pass
 
     @abstractmethod
-    def translate(self, text: str, src: Lang, target: Lang) -> str:
+    def translate(
+        self,
+        text: str,
+        src: Lang,
+        target: Lang,
+        temp: Optional[float] = None,
+        top_k: Optional[int] = None,
+    ) -> str:
         pass
 
 
 def _parse_langs(key: str, languages: LanguageMap) -> dict[Lang, str]:
-    return {k: v[key] for k, v in languages.items() if v[key] is not None}
+    return {k: val for k, v in languages.items() if (val := v[key]) is not None}
 
 
 class MarianTranslator(Translator):
@@ -62,7 +68,14 @@ class MarianTranslator(Translator):
     def supports(self, src: Lang, target: Lang) -> bool:
         return src in self._languages and target in self._languages
 
-    def translate(self, text: str, src: Lang, target: Lang) -> str:
+    def translate(
+        self,
+        text: str,
+        src: Lang,
+        target: Lang,
+        temp: Optional[float] = None,
+        top_k: Optional[int] = None,
+    ) -> str:
         src_id = self._languages[src]
         target_id = self._languages[target]
 
@@ -72,8 +85,9 @@ class MarianTranslator(Translator):
         with torch.no_grad():
             generated = data.model.generate(
                 **batch,
-                # top_k=50,
-                # temperature=1.2,
+                do_sample=temp is not None or top_k is not None,
+                top_k=top_k,
+                temperature=temp,
             )
 
         sentence = data.tokenizer.decode(generated[0], skip_special_tokens=True)
@@ -150,7 +164,14 @@ class NllbTranslator(Translator):
     def supports(self, src: Lang, target: Lang) -> bool:
         return src in self._languages and target in self._languages
 
-    def translate(self, text: str, src: Lang, target: Lang) -> str:
+    def translate(
+        self,
+        text: str,
+        src: Lang,
+        target: Lang,
+        temp: Optional[float] = None,
+        top_k: Optional[int] = None,
+    ) -> str:
         src_id = self._languages[src]
         target_id = self._languages[target]
 
@@ -162,16 +183,14 @@ class NllbTranslator(Translator):
             out = self._model.generate(
                 **encoded,
                 forced_bos_token_id=self._tokenizer.convert_tokens_to_ids(target_id),
-                do_sample=True,
-                # top_k=50,
-                # temperature=1.2,
+                do_sample=temp is not None or top_k is not None,
+                top_k=top_k,
+                temperature=temp,
             )
         return self._tokenizer.decode(out[0], skip_special_tokens=True)
 
 
 class MosesTranslator(Translator):
-    WEIGHT = 2
-
     def __init__(self, bin_path: str, model_path: str):
         self.bin_path = bin_path
         self.model_path = model_path
@@ -188,30 +207,45 @@ class MosesTranslator(Translator):
                 self.ini_path(EN, target)
             )
 
-    def translate(self, text: str, src: Lang, target: Lang) -> str:
+    def translate(
+        self,
+        text: str,
+        src: Lang,
+        target: Lang,
+        temp: Optional[float] = None,
+        top_k: Optional[int] = None,
+    ) -> str:
         if src != EN:
-            result = subprocess.run(
-                [self.bin_path, "-f", self.ini_path(src, EN)],
-                input=ensure_newline(text),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
+            parts = sanitize_for_moses(text)
+            for i in range(len(parts)):
+                result = subprocess.run(
+                    [self.bin_path, "-f", self.ini_path(src, EN)],
+                    input=ensure_newline(text),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True,
+                )
 
-            text = self.unesc(result.stdout, EN)
+                out = self.unesc(result.stdout, EN)
+                parts[i] = out
+            text = " ".join(parts)
 
         if target != EN:
-            result = subprocess.run(
-                [self.bin_path, "-f", self.ini_path(EN, target)],
-                input=ensure_newline(text),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-            )
+            parts = sanitize_for_moses(text)
+            for i in range(len(parts)):
+                result = subprocess.run(
+                    [self.bin_path, "-f", self.ini_path(EN, target)],
+                    input=ensure_newline(text),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=True,
+                )
 
-            text = self.unesc(result.stdout, target)
+                out = self.unesc(result.stdout, target)
+                parts[i] = out
+            text = " ".join(parts)
 
         return text
 
@@ -245,20 +279,33 @@ class EnglishChecker:
         # fetch from https://fasttext.cc/docs/en/language-identification.html
         self.model = fasttext.load_model("lid.176.bin")
 
-    def validate(self, text: str) -> str:
+    def validate(self, text: str, confidence_thresh: Optional[float] = None) -> str:
+        if confidence_thresh is None:
+            confidence_thresh = 0.85
+
         try:
             predictions = self.model.predict(text, k=1)
-            detected_lang = predictions[0][0].replace("__label__", "")
-            confidence = predictions[1][0]
 
-            if detected_lang == "en" and confidence > 0.85:
+            if len(predictions) < 2:
+                return text
+
+            possible_languages = predictions[0]
+            confidences = predictions[1]
+
+            if len(possible_languages) == 0 or len(confidences) == 0:
+                return text
+
+            detected_lang = possible_languages[0].replace("__label__", "")
+            confidence = confidences[0]
+
+            if detected_lang == "en" and confidence > confidence_thresh:
                 return text
 
             src = Lang(detected_lang)
 
             if NLLB_TRANSLATOR_INSTANCE.supports(src, EN):
                 print(
-                    f"Force translating to english, detected language {detected_lang} ({confidence * 100}%)",
+                    f"Force translating to english, detected language {detected_lang} ({confidence * 100}% < {confidence_thresh * 100}%)",
                     file=sys.stderr,
                 )
 
@@ -274,18 +321,25 @@ CHECKER = EnglishChecker()
 
 
 def translate(
-    text: str, translators: list[Translator], languages: list[Lang], iterations=10
+    text: str,
+    translators: list[Translator],
+    languages: list[Lang],
+    iterations=10,
+    temp: Optional[float] = None,
+    top_k: Optional[int] = None,
+    confidence_threshold: Optional[float] = None,
 ) -> str:
     print(f"Translating {text}", file=sys.stderr)
 
     src = EN
     i = 0
     translator = None
-    weights = [t.WEIGHT for t in translators]
     while True:
         if i >= iterations:
             if src != EN:
-                result = try_translate(random.choice(translators), src, EN, text)
+                result = try_translate(
+                    random.choice(translators), src, EN, text, temp=temp, top_k=top_k
+                )
 
                 if result is not None:
                     text = result
@@ -294,27 +348,27 @@ def translate(
 
             break
 
-        translator = random.choices(
-            translators,
-            weights=weights,
-            k=1,
-        )[0]
-
+        translator = random.choice(translators)
         target = random.choice(languages)
-        result = try_translate(translator, src, target, text)
+        result = try_translate(translator, src, target, text, temp=temp, top_k=top_k)
 
         if result is not None:
             text = result
             src = target
             i += 1
 
-    output = CHECKER.validate(unidecode(text))
+    output = CHECKER.validate(unidecode(text), confidence_threshold)
 
     return output
 
 
 def try_translate(
-    translator: Translator, src: Lang, target: Lang, text: str
+    translator: Translator,
+    src: Lang,
+    target: Lang,
+    text: str,
+    temp: Optional[float] = None,
+    top_k: Optional[int] = None,
 ) -> Optional[str]:
     try:
         if not translator.supports(src, target):
@@ -324,7 +378,7 @@ def try_translate(
             )
             return None
 
-        text = translator.translate(text, src, target)
+        text = translator.translate(text, src, target, temp=temp, top_k=top_k)
 
         print(
             f"Translated {src}->{target} with {translator.name()}: {text}",
@@ -365,3 +419,38 @@ def inject_moses(only_moses: bool):
             TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
         else:
             TRANSLATORS.append(MosesTranslator(moses_bin, moses_models))
+
+
+def sanitize_for_moses(text: str) -> list[str]:
+    # Force utf8
+    text = text.encode("utf-8", errors="ignore").decode("utf-8")
+
+    # Replace newlines with spaces so moses decodes whole lines
+    text = text.replace("\n", " ").replace("\r", " ")
+
+    # Strip ASCII control characters, pipes
+    text = re.sub(r"[\x00-\x1F\x7F-\x9F]", "", text)
+    text = text.replace("|", "")
+
+    # Escape other characters that moses can accept in this form
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    text = text.replace('"', "&quot;")
+    text = text.replace("'", "&apos;")
+    text = text.replace("[", "&#91;")
+    text = text.replace("]", "&#93;")
+
+    # Replace duplicate spaces
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # Ensure the phrase fits into moses's memory, split into multiple parts
+    parts = chunkify(text, 100)
+
+    return parts
+
+
+def chunkify(text: str, max_words: int = 100) -> list[str]:
+    words = text.split()
+
+    return [" ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)]
